@@ -1,0 +1,11 @@
+name: hesapkitap 
+channels: 
+  - defaults 
+  - conda-forge 
+dependencies: 
+  - python=3.8 
+  - pip 
+  - pip: 
+    - openai==1.0.0 
+    - pandas 
+    - PyMuPDF 

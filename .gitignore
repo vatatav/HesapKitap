@@ -1,0 +1,15 @@
+# Python 
+__pycache__/ 
+*.py[cod] 
+*$py.class 
+.env 
+.venv 
+venv/ 
+ENV/ 
+.idea/ 
+.vscode/ 
+*.log 
+# Proje özel 
+config.json 
+data/input_files/ 
+data/output_files/ 
