@@ -1,10 +1,11 @@
 import os
+import json
 import logging
 from datetime import datetime
 from data_processing import create_jsonl_for_training
 from fine_tuning import fine_tune_model
 from cutoff_utils import get_cutoff_text_from_excel, verify_cutoff_in_pdf
-from config_utils import get_api_key, save_model_info
+from config_utils import get_api_key, save_model_info, get_default_epochs, get_model_pricing
 
 # Klasör yapılandırması
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -107,10 +108,58 @@ def process_files():
       if choice in ['E', 'H']:
           return choice == 'E', JSONL_PATH if choice == 'E' else None
       print("Lütfen geçerli bir seçim yapın (E/H)")
+
+def calculate_estimated_cost(jsonl_path, model_type, epochs):
+  """JSONL dosyası için tahmini maliyeti hesaplar."""
+  try:
+      # Model fiyatlandırmasını al
+      pricing = get_model_pricing()
+      cost_per_1M = pricing[model_type]["training_cost_per_1M"]
+
+      total_tokens = 0
+      with open(jsonl_path, 'r', encoding='utf-8') as f:
+          for line in f:
+              entry = json.loads(line)
+              for message in entry["messages"]:
+                  content = message["content"]
+                  # Daha gelişmiş token hesaplama
+                  # Her kelime ortalama 1.3 token
+                  # Her sayı için +1 token
+                  # Her özel karakter için +1 token
+                  # JSON yapısı için ekstra tokenler
+                  words = content.split()
+                  estimated_tokens = 0
+                  for word in words:
+                      # Temel token sayısı
+                      estimated_tokens += len(word) / 3  # 3 karakter ≈ 1 token
+                      # Sayılar için ek token
+                      if any(c.isdigit() for c in word):
+                          estimated_tokens += 0.5
+                      # Özel karakterler için ek token
+                      if any(not c.isalnum() for c in word):
+                          estimated_tokens += 0.5
+
+                  # JSON yapısı için ek tokenler
+                  if message["role"] == "assistant":
+                      estimated_tokens *= 1.2  # JSON yapısı için %20 ek token
+
+                  total_tokens += estimated_tokens
+
+      # Training tokens = input tokens * epoch sayısı
+      total_training_tokens = total_tokens * epochs
+
+      # Tahmini maliyeti hesapla
+      estimated_cost = (cost_per_1M / 1_000_000) * total_training_tokens
+
+      return total_tokens, estimated_cost
+  except Exception as e:
+      logging.error(f"Maliyet hesaplama hatası: {e}")
+      return 0, 0
+
 def main():
   # Dosyaları işle ve JSONL dosyası oluştur/kontrol et
   proceed_training, jsonl_path = process_files()
-  
+
   if not proceed_training or not jsonl_path:
       logging.info("Program kullanıcı tercihi ile sonlandırıldı.")
       print("Program sonlandırılıyor.")
@@ -123,22 +172,44 @@ def main():
       return
 
   # Model tipini seç
+  pricing = get_model_pricing()
   while True:
       print("\nModel tipi seçin:")
-      print("1. gpt-4o-2024-08-06")
-      print("2. gpt-4o-mini-2024-07-18")
-      print("3. gpt-3.5-turbo")
-      model_type = input("Seçiminiz (1/2/3): ")
-      
-      selected_model = {
-          "1": "gpt-4o-2024-08-06",
-          "2": "gpt-4o-mini-2024-07-18",
-          "3": "gpt-3.5-turbo"
-      }.get(model_type)
-      
+      for idx, (model, info) in enumerate(pricing.items(), 1):
+          cost = info["training_cost_per_1M"]
+          desc = info["description"]
+          print(f"{idx}. {desc} (${cost:.3f}/1M tokens)")
+
+      choice = input("Seçiminiz (1-3): ")
+      selected_model = list(pricing.keys())[int(choice)-1] if choice.isdigit() and 1 <= int(choice) <= 3 else None
+
       if selected_model:
           break
       print("Lütfen geçerli bir seçim yapın.")
+
+  # Epoch sayısını belirle
+  default_epochs = get_default_epochs()
+  while True:
+      epochs = input(f"\nEpoch sayısını girin (varsayılan: {default_epochs}): ")
+      epochs = int(epochs) if epochs.isdigit() else default_epochs
+      if epochs > 0:
+          break
+      print("Lütfen geçerli bir sayı girin.")
+
+  # Tahmini maliyeti hesapla ve göster
+  total_tokens, estimated_cost = calculate_estimated_cost(jsonl_path, selected_model, epochs)
+  print(f"\nTahmini eğitim maliyeti:")
+  print(f"Tahmini base token sayısı: {total_tokens:,.2f}")
+  print(f"Tahmini toplam training token sayısı: {total_tokens * epochs:,.2f}")
+  print(f"Epoch sayısı: {epochs}")
+  print(f"Tahmini maliyet: ${estimated_cost:.2f}")
+  print("\nNot: Bu maliyet tahminidir. Gerçek maliyet farklılık gösterebilir.")
+
+  # Kullanıcı onayı
+  proceed = input("\nBu maliyetle eğitimi başlatmak istiyor musunuz? (E/H): ").upper()
+  if proceed != 'E':
+      print("İşlem iptal edildi.")
+      return
 
   # Model adı ve açıklaması
   model_name = create_model_name(selected_model)
@@ -150,9 +221,10 @@ def main():
       jsonl_file=jsonl_path,
       model_type=selected_model,
       model_name=model_name,
-      explanation=model_explanation
+      explanation=model_explanation,
+      epochs=epochs
   )
-  
+
   if model_id:
       logging.info(f"Eğitim işlemi tamamlandı. Model ID: {model_id}")
       print(f"\nEğitim işlemi tamamlandı.")

@@ -36,7 +36,7 @@ def calculate_fine_tuning_cost(tokens, model_type):
   
   return costs
 
-def fine_tune_model(api_key, jsonl_file, model_type, model_name, explanation):
+def fine_tune_model(api_key, jsonl_file, model_type, model_name, explanation, epochs=5):
   """OpenAI API kullanarak model eğitimi yapar."""
   client = OpenAI(api_key=api_key)
   try:
@@ -50,7 +50,10 @@ def fine_tune_model(api_key, jsonl_file, model_type, model_name, explanation):
       # Fine-tuning işini başlat
       job = client.fine_tuning.jobs.create(
           training_file=file_response.id,
-          model=model_type
+          model=model_type,
+          hyperparameters={
+              "n_epochs": epochs
+          }
       )
 
       logging.info(f"Model eğitimi başlatıldı. Job ID: {job.id}")
@@ -81,6 +84,7 @@ def fine_tune_model(api_key, jsonl_file, model_type, model_name, explanation):
           "model_name": model_name,
           "explanation": explanation,
           "model_type": model_type,
+          "epochs": epochs,  # Epoch bilgisini ekledik
           "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
           "last_updated": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
           "toplam_input_tokens_used": tokens["input"],
@@ -94,6 +98,7 @@ def fine_tune_model(api_key, jsonl_file, model_type, model_name, explanation):
               "output_tokens_used": tokens["output"],
               "training_tokens_used": tokens["training"],
               "cost": total_cost,
+              "epochs": epochs,  # Epoch bilgisini history'ye de ekledik
               "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
           }]
       }

@@ -84,3 +84,13 @@ def get_system_prompt():
   if not system_prompt:
       logging.warning("System prompt bulunamadı. Varsayılan değer kullanılıyor.")
   return system_prompt
+
+def get_model_pricing():
+  """Model fiyatlandırma bilgilerini döndürür."""
+  config = load_config()
+  return config.get("model_pricing", {})
+
+def get_default_epochs():
+  """Varsayılan epoch sayısını döndürür."""
+  config = load_config()
+  return config.get("default_epochs", 10)
