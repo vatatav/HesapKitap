@@ -4,6 +4,7 @@ import logging
 import pandas as pd
 import fitz  # PyMuPDF için
 from datetime import datetime
+from config_utils import get_system_prompt  # Import ekleyelim
 
 def pdf_to_jsonl(pdf_path, cutoff_text):
   """PDF dosyasını işler ve metin içeriğini döndürür."""
@@ -93,9 +94,12 @@ def validate_jsonl(jsonl_path):
 
         logging.error(f"JSONL dosyası oluşturulurken hata oluştu: {e}")
         return 0, 0, 0
-from config_utils import get_system_prompt  # Import ekleyelim
+
 def create_jsonl_for_training(txt_path, excel_path, cutoff_text, output_jsonl_path, append=False):
   """TXT ve Excel dosyalarından eğitim için JSONL dosyası oluşturur."""
+  # System prompt'u config'den al
+  system_prompt = get_system_prompt()
+
   # TXT dosyasını işle
   try:
       with open(txt_path, 'r', encoding='utf-8') as f:
@@ -124,7 +128,7 @@ def create_jsonl_for_training(txt_path, excel_path, cutoff_text, output_jsonl_pa
               "messages": [
                   {
                       "role": "system",
-                      "content": "TXT dosyasından excel formatına dönüştürme yapan bir asistansın."
+                      "content": system_prompt  # Config'den gelen system prompt kullanılıyor
                   },
                   {
                       "role": "user",
