@@ -48,12 +48,25 @@ def excel_to_jsonl(excel_path):
           return obj
 
       # DataFrame'leri JSON formatına dönüştür
-      info_data = info_df.applymap(convert_datetime).to_dict('records') if info_df is not None else []
-      transactions_data = transactions_df.applymap(convert_datetime).to_dict('records') if transactions_df is not None else []
+      if info_df is not None:
+          # Her sütunu ayrı ayrı dönüştür
+          for column in info_df.columns:
+              info_df[column] = info_df[column].map(convert_datetime)
+          info_data = info_df.to_dict('records')
+      else:
+          info_data = []
+
+      if transactions_df is not None:
+          # Her sütunu ayrı ayrı dönüştür
+          for column in transactions_df.columns:
+              transactions_df[column] = transactions_df[column].map(convert_datetime)
+          transactions_data = transactions_df.to_dict('records')
+      else:
+          transactions_data = []
 
       excel_data = {
-          "Bilgiler": info_data,
-          "İşlemler": transactions_data
+          "Tablo1": info_data,
+          "Tablo2": transactions_data
       }
 
       return excel_data, excel_info_rows, excel_transactions_rows
@@ -62,27 +75,40 @@ def excel_to_jsonl(excel_path):
       return None, 0, 0
 
 def validate_jsonl(jsonl_path):
-  """JSONL dosyasının formatını kontrol eder."""
-  try:
-      with open(jsonl_path, 'r', encoding='utf-8') as f:
-          for idx, line in enumerate(f, 1):
-              entry = json.loads(line)
-              if not isinstance(entry, dict):
-                  return False, f"Line {idx} is not a dictionary"
-              if "messages" not in entry:
-                  return False, f"Line {idx} does not contain 'messages' key"
-              for msg in entry["messages"]:
-                  if not all(key in msg for key in ["role", "content"]):
-                      return False, f"Line {idx} has invalid message format"
-      return True, "Valid JSONL format"
-  except Exception as e:
-      return False, f"Error validating JSONL: {str(e)}"
+    """JSONL dosyasının formatını kontrol eder."""
+    try:
+        with open(jsonl_path, 'r', encoding='utf-8') as f:
+            for idx, line in enumerate(f, 1):
+                entry = json.loads(line)
+                if not isinstance(entry, dict):
+                    return False, f"Line {idx} is not a dictionary"
+                if "messages" not in entry:
+                    return False, f"Line {idx} does not contain 'messages' key"
+                for msg in entry["messages"]:
+                    if not all(key in msg for key in ["role", "content"]):
+                        return False, f"Line {idx} has invalid message format"
+        return True, "Valid JSONL format"
+    except Exception as e:
+        return False, f"Error validating JSONL: {str(e)}"
 
-def create_jsonl_for_training(pdf_path, excel_path, cutoff_text, output_jsonl_path):
-  """PDF ve Excel dosyalarından eğitim için JSONL dosyası oluşturur."""
-  # PDF dosyasını işle
-  pdf_text, pdf_text_size = pdf_to_jsonl(pdf_path, cutoff_text)
-  if not pdf_text:
+        logging.error(f"JSONL dosyası oluşturulurken hata oluştu: {e}")
+        return 0, 0, 0
+from config_utils import get_system_prompt  # Import ekleyelim
+def create_jsonl_for_training(txt_path, excel_path, cutoff_text, output_jsonl_path, append=False):
+  """TXT ve Excel dosyalarından eğitim için JSONL dosyası oluşturur."""
+  # TXT dosyasını işle
+  try:
+      with open(txt_path, 'r', encoding='utf-8') as f:
+          txt_content = f.read()
+
+      if cutoff_text:
+          cutoff_index = txt_content.find(cutoff_text)
+          if cutoff_index != -1:
+              txt_content = txt_content[:cutoff_index].strip()
+
+      txt_content_size = len(txt_content)
+  except Exception as e:
+      logging.error(f"{txt_path} dosyasını işlerken hata oluştu: {e}")
       return 0, 0, 0
 
   # Excel dosyasını işle
@@ -90,18 +116,19 @@ def create_jsonl_for_training(pdf_path, excel_path, cutoff_text, output_jsonl_pa
   if not excel_data:
       return 0, 0, 0
 
-  # JSONL dosyasını oluştur
+  # JSONL dosyasını oluştur/güncelle
   try:
-      with open(output_jsonl_path, 'w', encoding='utf-8') as jsonl_file:
+      mode = 'a' if append else 'w'
+      with open(output_jsonl_path, mode, encoding='utf-8') as jsonl_file:
           entry = {
               "messages": [
                   {
                       "role": "system",
-                      "content": "PDF dosyasından excel formatına dönüştürme yapan bir asistansın."
+                      "content": "TXT dosyasından excel formatına dönüştürme yapan bir asistansın."
                   },
                   {
                       "role": "user",
-                      "content": pdf_text
+                      "content": txt_content
                   },
                   {
                       "role": "assistant",
@@ -116,11 +143,9 @@ def create_jsonl_for_training(pdf_path, excel_path, cutoff_text, output_jsonl_pa
       if not is_valid:
           raise ValueError(f"Invalid JSONL format: {validation_message}")
 
-      logging.info(f"JSONL dosyası oluşturuldu: {output_jsonl_path}")
-      print(f"JSONL dosyası başarıyla oluşturuldu: {output_jsonl_path}")
-
-      return pdf_text_size, excel_info_rows, excel_transactions_rows
+      logging.info(f"JSONL dosyası güncellendi: {output_jsonl_path}")
+      return txt_content_size, excel_info_rows, excel_transactions_rows
 
   except Exception as e:
-      logging.error(f"JSONL dosyası oluşturulurken hata oluştu: {e}")
+      logging.error(f"JSONL dosyası işlenirken hata oluştu: {e}")
       return 0, 0, 0

@@ -55,3 +55,13 @@ def get_api_key():
     if not api_key:
         logging.warning("API anahtarı bulunamadı. Lütfen config.json dosyasına ekleyin.")
     return api_key
+
+def get_system_prompt():
+  """
+  Konfigürasyon dosyasından system prompt'u okur ve döndürür.
+  """
+  config = load_config()
+  system_prompt = config.get("system_prompt", "PDF dosyasından excel formatına dönüştürme yapan bir asistansın.")
+  if not system_prompt:
+      logging.warning("System prompt bulunamadı. Varsayılan değer kullanılıyor.")
+  return system_prompt

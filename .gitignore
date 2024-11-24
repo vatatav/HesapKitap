@@ -13,3 +13,8 @@ ENV/
 config.json 
 data/input_files/ 
 data/output_files/ 
+*.pdf
+*.xls*
+*.jsonl
+*.txt
+*.bas

@@ -6,11 +6,15 @@ from fine_tuning import fine_tune_model
 from cutoff_utils import get_cutoff_text_from_excel, verify_cutoff_in_pdf
 from config_utils import get_api_key, save_model_info
 
-# Development klasörü ayarı
-BASE_DIR = "development"
+# Klasör yapılandırması
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(BASE_DIR, "data", "FineTune")
+DEV_DIR = os.path.join(BASE_DIR, "development")
+JSONL_FILENAME = "FineTuneIsbank.jsonl"
+JSONL_PATH = os.path.join(DATA_DIR, JSONL_FILENAME)
 
-log_file_path = os.path.join(BASE_DIR, "general_operations.log")
-
+# Loglama ayarları
+log_file_path = os.path.join(DEV_DIR, "general_operations.log")
 logging.basicConfig(
   filename=log_file_path,
   level=logging.INFO,
@@ -22,81 +26,94 @@ logging.basicConfig(
 def create_model_name(model_type):
   """Model adını oluşturur."""
   date_prefix = datetime.now().strftime('%Y-%m-%d')
-  model_suffix = model_type.split('-')[1]  # örn: '4o-mini' veya '3.5-turbo'
+  model_suffix = model_type.split('-')[1]
   return f"{date_prefix}-FirstModel-{model_suffix}"
 
-def process_pdf_files():
-  """PDF dosyalarını işler ve JSONL dosyaları oluşturur."""
-  pdf_files = [f for f in os.listdir(BASE_DIR) if f.endswith('.pdf')]
-  if not pdf_files:
-      logging.info("Eğitim dosyası bulunamadı.")
-      print("Eğitim dosyası bulunamadı.")
-      return []
+def process_files():
+  """TXT ve Excel dosyalarını işler ve JSONL dosyası oluşturur."""
+  # JSONL dosyasının varlığını kontrol et
+  JSONL_PATH = os.path.join(DATA_DIR, "FineTuneIsbank.jsonl")
+
+  if os.path.exists(JSONL_PATH):
+      print(f"\nMevcut JSONL dosyası bulundu: FineTuneIsbank.jsonl")
+      while True:
+          choice = input("Bu dosyayı kullanarak model eğitimi yapmak ister misiniz? (E/H): ").upper()
+          if choice in ['E', 'H']:
+              if choice == 'E':
+                  return True, JSONL_PATH
+              else:
+                  return False, None
+          print("Lütfen geçerli bir seçim yapın (E/H)")
+
+  # TXT dosyalarını bul
+  txt_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.txt')]
+  if len(txt_files) < 10:
+      logging.error("Yetersiz örnek sayısı. En az 10 örnek gerekli.")
+      print("Yetersiz örnek sayısı. En az 10 örnek gerekli. A1")
+      print("Txt dosyalrı",txt_files)
+      return False, None
 
   successful_samples = []
-  total_pdf_text_size = 0
+  total_txt_size = 0
   total_excel_info_rows = 0
   total_excel_transactions_rows = 0
+  first_file = True
 
-  for pdf_file in pdf_files:
-      excel_file = pdf_file.replace('.pdf', '.xlsx')
-      pdf_path = os.path.join(BASE_DIR, pdf_file)
-      excel_path = os.path.join(BASE_DIR, excel_file)
+  for txt_file in txt_files:
+      excel_file = txt_file.replace('.txt', '.xlsx')
+      txt_path = os.path.join(DATA_DIR, txt_file)
+      excel_path = os.path.join(DATA_DIR, excel_file)
+
+      if not os.path.exists(excel_path):
+          logging.warning(f"{excel_file} bulunamadı, bu örnek atlanıyor.")
+          continue
 
       # Excel dosyasından cutoff metni oku
       cutoff_text = get_cutoff_text_from_excel(excel_path)
       if cutoff_text == "READ_ERROR":
-          logging.error(f"{excel_path} dosyası okunamadı, işleme devam edilemiyor.")
-          print(f"{excel_file} okunamadı, işleme devam edilemiyor.")
+          logging.error(f"{excel_path} dosyası okunamadı.")
           continue
-
-      # PDF içinde cutoff metni doğrula
-      cutoff_result = verify_cutoff_in_pdf(pdf_path, cutoff_text)
-      if cutoff_result in ["READ_ERROR", "TERMINATE"]:
-          logging.error(f"{pdf_path} dosyası işlenemedi, işleme devam edilemiyor.")
-          print(f"{pdf_file} işlenemedi, işleme devam edilemiyor.")
-          continue
-      elif cutoff_result == "NO_CUTOFF":
-          logging.info(f"{pdf_file} için cutoff metni olmadan devam ediliyor.")
-          cutoff_text = None
-
-      # JSONL dosyasını oluştur
-      jsonl_path = os.path.join(BASE_DIR, pdf_file.replace('.pdf', '.jsonl'))
 
       try:
-          pdf_text_size, excel_info_rows, excel_transactions_rows = create_jsonl_for_training(
-              pdf_path, excel_path, cutoff_text, jsonl_path)
+          txt_size, excel_info_rows, excel_transactions_rows = create_jsonl_for_training(
+              txt_path, excel_path, cutoff_text, JSONL_PATH, append=not first_file)
+          first_file = False
       except Exception as e:
-          logging.error(f"{pdf_file} ve {excel_file} işlenirken hata oluştu: {e}")
-          print(f"{pdf_file} ve {excel_file} işlenirken hata oluştu, işleme devam edilemiyor.")
+          logging.error(f"{txt_file} ve {excel_file} işlenirken hata oluştu: {e}")
           continue
 
-      if pdf_text_size == 0 or excel_transactions_rows == 0:
-          logging.error(f"{pdf_file} ve {excel_file} işlenirken hata oluştu, işleme devam edilemiyor.")
-          print(f"{pdf_file} ve {excel_file} işlenirken hata oluştu, işleme devam edilemiyor.")
+      if txt_size == 0 or excel_transactions_rows == 0:
+          logging.error(f"{txt_file} ve {excel_file} işlenirken hata oluştu.")
           continue
 
-      successful_samples.append(jsonl_path)
-      total_pdf_text_size += pdf_text_size
+      successful_samples.append((txt_file, excel_file))
+      total_txt_size += txt_size
       total_excel_info_rows += excel_info_rows
       total_excel_transactions_rows += excel_transactions_rows
 
-      logging.info(f"{pdf_file} ve {excel_file} başarıyla işlendi.")
+  if len(successful_samples) < 10:
+      print(successful_samples)
+      logging.error("Yetersiz başarılı örnek sayısı. En az 10 örnek gerekli.")
+      print("Yetersiz başarılı örnek sayısı. En az 10 örnek gerekli. A3")
+      return False, None
 
-  print(f"{len(successful_samples)} dosya çifti başarıyla işlendi.")
-  print(f"Toplam PDF metin boyutu: {total_pdf_text_size} karakter")
-  print(f"Toplam 'Bilgiler' satır sayısı: {total_excel_info_rows}")
-  print(f"Toplam 'İşlemler' satır sayısı: {total_excel_transactions_rows}")
+  print(f"\n{len(successful_samples)} dosya çifti başarıyla işlendi:")
+  print(f"Toplam metin boyutu: {total_txt_size} karakter")
+  print(f"Toplam 'Tablo1' satır sayısı: {total_excel_info_rows}")
+  print(f"Toplam 'Tablo2' satır sayısı: {total_excel_transactions_rows}")
 
-  return successful_samples
-
+  while True:
+      choice = input("\nOluşturulan JSONL dosyası ile model eğitimi yapmak ister misiniz? (E/H): ").upper()
+      if choice in ['E', 'H']:
+          return choice == 'E', JSONL_PATH if choice == 'E' else None
+      print("Lütfen geçerli bir seçim yapın (E/H)")
 def main():
-  # PDF dosyalarını işle ve JSONL dosyaları oluştur
-  successful_samples = process_pdf_files()
+  # Dosyaları işle ve JSONL dosyası oluştur/kontrol et
+  proceed_training, jsonl_path = process_files()
   
-  if not successful_samples:
-      logging.error("Hiçbir dosya çifti başarıyla işlenemedi. Eğitim işlemi durduruldu.")
-      print("Hiçbir dosya çifti başarıyla işlenemedi. Eğitim işlemi durduruldu.")
+  if not proceed_training or not jsonl_path:
+      logging.info("Program kullanıcı tercihi ile sonlandırıldı.")
+      print("Program sonlandırılıyor.")
       return
 
   # API anahtarını kontrol et
@@ -106,32 +123,44 @@ def main():
       return
 
   # Model tipini seç
-  model_type = input("Model tipi seçin (1. gpt-4o-2024-08-06, 2. gpt-4o-mini-2024-07-18, 3. gpt-3.5-turbo): ")
-  selected_model = {
-      "1": "gpt-4o-2024-08-06",
-      "2": "gpt-4o-mini-2024-07-18",
-      "3": "gpt-3.5-turbo"
-  }.get(model_type, "gpt-3.5-turbo")
+  while True:
+      print("\nModel tipi seçin:")
+      print("1. gpt-4o-2024-08-06")
+      print("2. gpt-4o-mini-2024-07-18")
+      print("3. gpt-3.5-turbo")
+      model_type = input("Seçiminiz (1/2/3): ")
+      
+      selected_model = {
+          "1": "gpt-4o-2024-08-06",
+          "2": "gpt-4o-mini-2024-07-18",
+          "3": "gpt-3.5-turbo"
+      }.get(model_type)
+      
+      if selected_model:
+          break
+      print("Lütfen geçerli bir seçim yapın.")
 
   # Model adı ve açıklaması
   model_name = create_model_name(selected_model)
-  model_explanation = input("Model açıklaması: ")
+  model_explanation = input("\nModel açıklaması: ")
 
   # Eğitim işlemi
-  for jsonl_file in successful_samples:
-      model_id = fine_tune_model(
-          api_key=api_key,
-          jsonl_file=jsonl_file,
-          model_type=selected_model,
-          model_name=model_name,
-          explanation=model_explanation
-      )
-      
-      if model_id:
-          logging.info(f"Eğitim işlemi tamamlandı. Model ID: {model_id}")
-          print(f"Eğitim işlemi tamamlandı. Model ID: {model_id}")
-      else:
-          logging.error(f"{jsonl_file} ile model eğitimi başarısız.")
+  model_id = fine_tune_model(
+      api_key=api_key,
+      jsonl_file=jsonl_path,
+      model_type=selected_model,
+      model_name=model_name,
+      explanation=model_explanation
+  )
+  
+  if model_id:
+      logging.info(f"Eğitim işlemi tamamlandı. Model ID: {model_id}")
+      print(f"\nEğitim işlemi tamamlandı.")
+      print(f"Model ID: {model_id}")
+      print(f"Model Adı: {model_name}")
+  else:
+      logging.error("Model eğitimi başarısız.")
+      print("\nModel eğitimi başarısız.")
 
 if __name__ == "__main__":
   main()
