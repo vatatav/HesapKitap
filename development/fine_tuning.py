@@ -1,42 +1,11 @@
-from openai import OpenAI
+from openai import OpenAI # type: ignore
 import logging
 import time
+import json
 from datetime import datetime
-from config_utils import save_model_info
+from config_utils import save_model_info, get_model_pricing
 
-def calculate_fine_tuning_cost(tokens, model_type):
-  """Model türüne göre eğitim maliyetini hesaplar."""
-  PRICING = {
-      "gpt-4o-2024-08-06": {
-          "input": 3.750,
-          "cached_input": 1.875,
-          "output": 15.000,
-          "training": 25.000
-      },
-      "gpt-4o-mini-2024-07-18": {
-          "input": 0.300,
-          "cached_input": 0.150,
-          "output": 1.200,
-          "training": 3.000
-      },
-      "gpt-3.5-turbo": {
-          "input": 3.000,
-          "output": 6.000,
-          "training": 8.000
-      }
-  }
-  
-  costs = {
-      "input_cost": (tokens["input"] / 1_000_000) * PRICING[model_type]["input"],
-      "output_cost": (tokens["output"] / 1_000_000) * PRICING[model_type]["output"],
-      "training_cost": (tokens["training"] / 1_000_000) * PRICING[model_type]["training"]
-  }
-  if "cached_input" in tokens:
-      costs["cached_input_cost"] = (tokens["cached_input"] / 1_000_000) * PRICING[model_type]["cached_input"]
-  
-  return costs
-
-def fine_tune_model(api_key, jsonl_file, model_type, model_name, explanation, epochs=5):
+def fine_tune_model(api_key, jsonl_file, model_type, explanation, epochs=5):
   """OpenAI API kullanarak model eğitimi yapar."""
   client = OpenAI(api_key=api_key)
   try:
@@ -46,6 +15,31 @@ def fine_tune_model(api_key, jsonl_file, model_type, model_name, explanation, ep
               file=f,
               purpose='fine-tune'
           )
+
+      # Eğitim başlamadan önce tahmini token ve maliyet hesaplama
+      # Bu kısmı IsBankCreditCards.py'den alacağız
+      total_tokens = 0
+      with open(jsonl_file, 'r', encoding='utf-8') as f:
+          for line in f:
+              entry = json.loads(line)
+              for message in entry["messages"]:
+                  content = message["content"]
+                  words = content.split()
+                  estimated_tokens = 0
+                  for word in words:
+                      estimated_tokens += len(word) / 3
+                      if any(c.isdigit() for c in word):
+                          estimated_tokens += 0.5
+                      if any(not c.isalnum() for c in word):
+                          estimated_tokens += 0.5
+                  if message["role"] == "assistant":
+                      estimated_tokens *= 1.2
+                  total_tokens += estimated_tokens
+
+      estimated_training_tokens = total_tokens * epochs
+      pricing = get_model_pricing()
+      cost_per_1M = pricing[model_type]["training_cost_per_1M"]
+      estimated_cost = (cost_per_1M / 1_000_000) * estimated_training_tokens
 
       # Fine-tuning işini başlat
       job = client.fine_tuning.jobs.create(
@@ -69,38 +63,16 @@ def fine_tune_model(api_key, jsonl_file, model_type, model_name, explanation, ep
       if job_status.status == 'failed':
           raise Exception(f"Eğitim başarısız: {job_status.error}")
 
-      # Token kullanımı ve maliyet hesaplama
-      tokens = {
-          "input": job_status.usage.prompt_tokens,
-          "output": job_status.usage.completion_tokens,
-          "training": job_status.usage.total_tokens
-      }
-      costs = calculate_fine_tuning_cost(tokens, model_type)
-      total_cost = sum(costs.values())
-
       # Model bilgilerini kaydet
       training_info = {
           "model_id": job.id,
-          "model_name": model_name,
           "explanation": explanation,
           "model_type": model_type,
-          "epochs": epochs,  # Epoch bilgisini ekledik
+          "base_model": model_type,  # İlk eğitimde base_model = model_type
+          "epochs": epochs,
           "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-          "last_updated": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-          "toplam_input_tokens_used": tokens["input"],
-          "toplam_output_tokens_used": tokens["output"],
-          "toplam_training_tokens_used": tokens["training"],
-          "toplam_cost": total_cost,
-          "training_history": [{
-              "jsonl_file": jsonl_file,
-              "file_type": "IsBank",
-              "input_tokens_used": tokens["input"],
-              "output_tokens_used": tokens["output"],
-              "training_tokens_used": tokens["training"],
-              "cost": total_cost,
-              "epochs": epochs,  # Epoch bilgisini history'ye de ekledik
-              "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-          }]
+          "estimated_training_tokens": estimated_training_tokens,
+          "estimated_cost": estimated_cost
       }
       save_model_info(training_info)
       return job.id

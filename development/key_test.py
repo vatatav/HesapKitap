@@ -1,4 +1,4 @@
-from openai import OpenAI
+from openai import OpenAI # type: ignore
 from config_utils import get_api_key
 
 # API anahtarını yükle ve client oluştur

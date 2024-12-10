@@ -13,6 +13,7 @@ DATA_DIR = os.path.join(BASE_DIR, "data", "FineTune")
 DEV_DIR = os.path.join(BASE_DIR, "development")
 JSONL_FILENAME = "FineTuneIsbank.jsonl"
 JSONL_PATH = os.path.join(DATA_DIR, JSONL_FILENAME)
+model_info_path = os.path.join(DEV_DIR, "model_info.json")
 
 # Loglama ayarları
 log_file_path = os.path.join(DEV_DIR, "general_operations.log")
@@ -24,11 +25,15 @@ logging.basicConfig(
   encoding='utf-8'
 )
 
-def create_model_name(model_type):
-  """Model adını oluşturur."""
-  date_prefix = datetime.now().strftime('%Y-%m-%d')
-  model_suffix = model_type.split('-')[1]
-  return f"{date_prefix}-FirstModel-{model_suffix}"
+def get_saved_models():
+  """Kaydedilmiş model bilgilerini yükler."""
+  try:
+      if os.path.exists(model_info_path):
+          with open(model_info_path, 'r', encoding='utf-8') as f:
+              return json.load(f)
+  except Exception as e:
+      logging.error(f"Model bilgileri yüklenemedi: {e}")
+  return []
 
 def process_files():
   """TXT ve Excel dosyalarını işler ve JSONL dosyası oluşturur."""
@@ -175,16 +180,46 @@ def main():
   pricing = get_model_pricing()
   while True:
       print("\nModel tipi seçin:")
-      for idx, (model, info) in enumerate(pricing.items(), 1):
-          cost = info["training_cost_per_1M"]
-          desc = info["description"]
-          print(f"{idx}. {desc} (${cost:.3f}/1M tokens)")
+      print("1. GPT-4 (En yüksek performans)")
+      print("2. GPT-4 Mini (Orta performans)")
+      print("3. GPT-3.5 Turbo (Temel performans)")
+      print("4. Eğitilmiş model seçimi")
+      print("5. Kayıtlı olmayan model")
 
-      choice = input("Seçiminiz (1-3): ")
-      selected_model = list(pricing.keys())[int(choice)-1] if choice.isdigit() and 1 <= int(choice) <= 3 else None
+      choice = input("Seçiminiz (1-5): ")
 
-      if selected_model:
+      if choice == "4":
+          saved_models = get_saved_models()
+          if not saved_models:
+              print("Kayıtlı model bulunamadı.")
+              continue
+
+          print("\nKayıtlı modeller:")
+          for idx, model in enumerate(saved_models, 1):
+              print(f"{idx}. Model ID: {model['model_id']}")
+              print(f"   Açıklama: {model['explanation']}")
+              print("---")
+
+          print(f"{len(saved_models) + 1}. Geri dön")
+
+          model_choice = input(f"Seçiminiz (1-{len(saved_models) + 1}): ")
+          if model_choice.isdigit():
+              if int(model_choice) == len(saved_models) + 1:
+                  continue
+              if 1 <= int(model_choice) <= len(saved_models):
+                  selected_model = saved_models[int(model_choice)-1]['model_type']
+                  base_model = saved_models[int(model_choice)-1]['model_id']
+                  break
+      elif choice == "5":
+          model_id = input("Model ID'sini girin: ")
+          selected_model = input("Model tipini girin: ")
+          base_model = model_id
           break
+      elif choice.isdigit() and 1 <= int(choice) <= 3:
+          selected_model = list(pricing.keys())[int(choice)-1]
+          base_model = selected_model
+          break
+
       print("Lütfen geçerli bir seçim yapın.")
 
   # Epoch sayısını belirle
@@ -211,8 +246,7 @@ def main():
       print("İşlem iptal edildi.")
       return
 
-  # Model adı ve açıklaması
-  model_name = create_model_name(selected_model)
+  # Model açıklaması
   model_explanation = input("\nModel açıklaması: ")
 
   # Eğitim işlemi
@@ -220,7 +254,6 @@ def main():
       api_key=api_key,
       jsonl_file=jsonl_path,
       model_type=selected_model,
-      model_name=model_name,
       explanation=model_explanation,
       epochs=epochs
   )
@@ -229,7 +262,6 @@ def main():
       logging.info(f"Eğitim işlemi tamamlandı. Model ID: {model_id}")
       print(f"\nEğitim işlemi tamamlandı.")
       print(f"Model ID: {model_id}")
-      print(f"Model Adı: {model_name}")
   else:
       logging.error("Model eğitimi başarısız.")
       print("\nModel eğitimi başarısız.")
